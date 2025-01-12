@@ -1,0 +1,57 @@
+---
+title: "Data Science Capstone Project: N-Gram Text Predictor"
+author: "Howard Murray"
+date: "2025-01-11"
+output: ioslides_presentation
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Project Overview
+
+This presentation serves as as an accompaniment to the Capstone Project of the Johns Hopkins Data Science Specialization. This is the pitch for the application that I created using the **shiny** package in R. This presentation will:
+
+1. Provide some background about the problem I'm trying to solve.
+2. Describe my approach.
+3. Talk about my **N-Gram Text Predictor** app and how to use it.
+4. Highlight its features and discuss future improvements.
+
+
+- You can view my app at  <https://h-town1906.shinyapps.io/next-word-predictor/>. 
+- My code and data files can be viewed at <https://github.com/murrayha26/Capstone>. 
+
+## Approach
+
+**My approach was based on [Katz's Backoff model](https://en.wikipedia.org/wiki/Katz%27s_back-off_model) and the use of Frequency tables of N-grams to generate a prediction model.**
+
+High-level process steps were:
+
+- Download the files
+- Clean and preprocess the text to remove punctuation, unnecessary words (called stopwords), various non-ASCII text like emojis, and convert the text to lowercase.
+- Generate N-grams (singular, pairs and triplets of word groupings) from my corpus.
+- The N-grams were then arranged by frequency from highest to lowest.
+- The model would compare user-supplied text to its own N-gram frequency tables and predict the next likely three words.
+
+## Using the N-Gram Text Predictor
+
+The app is very simple to use. The user simply: 
+
+1. Types a phrase or sentence into the input box provided, and 
+
+2. Clicks the 'Predict next words' button 
+
+The app will predict the Top 3 likely next words.
+
+## Highlights and Future Plans
+
+- The app is very easy to use. The code provided relies on n-gram frequency tables of bi-grams due to ShinyApps' 100MB limit.
+- There are 1 million bi-grams which makes for a good library of terms. (Increasing the number of terms will improve accuracy.)
+- The code is can be scaled to include other size N-grams such as uni-grams, bi-grams or higher order N-grams.
+- Trade offs with the order of N-grams put speed against accuracy. (This version settled on using bi-grams.)
+- Future iterations will employ more sophisticated means of reading the frequency tables to increase speed.
+- Another feature to consider in the future is the use of AI/Machine learning algorithms that will enable the app to learn new word patterns based on the user input.
+
+
