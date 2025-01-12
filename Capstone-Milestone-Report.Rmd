@@ -1,0 +1,270 @@
+---
+title: "Capstone Milestone Report"
+author: "Howard Murray"
+date: "2024-12-12"
+output:
+  html_document:
+  highlight: textmate
+  theme: cosmo
+  toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction 
+
+The goal of this project is to demonstrate that I've gotten used to working with data and that I'm on track to create my prediction algorithm as part of the Data Science Capstone project for the Data Science Specialization offered through [Coursera](https://www.coursera.org/specializations/jhu-data-science) under the instruction of Data Science professors from [Johns Hopkins University](www.jhu.edu) and corporate partner, [Swiftkey](http://www.swiftkey.com/). 
+
+This milestone report will serve as an update of how I plan to apply data science techniques in the area of natural language processing. My report will address how I performed data extraction, data cleaning, and text mining of the [HC Copora](http://www.copora.heliohost.org). The code, plots and explanatory text will inform the reader of my plan to build a text prediction application. 
+
+```{r results='hide', message=FALSE, warning=FALSE, echo=FALSE}
+library(dplyr)
+library(data.table)
+library(R.utils)
+library(tm)
+library(ggplot2)
+library(stringi)
+library(wordcloud)
+library(SnowballC)
+library(RWeka)
+```
+
+# Data Gathering 
+
+The data set consists of three files in U.S. English. One file containing information from blogs, another a collection of news reels, and the third file is a collection of Twitter messages. 
+
+### Loading the Data Set 
+```{r, eval=FALSE, echo=TRUE} 
+# Download the data files
+if (!file.exists("Coursera-SwiftKey.zip")) {
+  download.file("https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip",
+                "Coursera-SwiftKey.zip", method = "curl")
+}
+
+# Unzip the data files
+unzip("Coursera-SwiftKey.zip")
+```
+
+# Text Data Summary Statistics 
+```{r, warning=FALSE, echo=FALSE}
+blogs <- readLines("./final/en_US/en_US.blogs.txt", encoding = "UTF-8", skipNul=TRUE)
+news <- readLines("./final/en_US/en_US.news.txt", encoding = "UTF-8", skipNul=TRUE)
+twitter <- readLines("./final/en_US/en_US.twitter.txt", encoding = "UTF-8", skipNul=TRUE)
+
+# Compute File Size in Megabytes, number of lines, and word count of each file.
+# File Size
+blogsFileSize <- file.info("./final/en_US/en_US.blogs.txt")$size / 1024^2
+newsFileSize <- file.info("./final/en_US/en_US.news.txt")$size / 1024^2
+twitterFileSize <- file.info("./final/en_US/en_US.twitter.txt")$size / 1024^2
+
+# Compute number of lines per file
+blogs.Length <- length(blogs)
+news.Length <- length(news)
+twitter.Length <- length(twitter)
+
+# Compute number of words per file
+blogsWords <- sum(sapply(gregexpr("\\S+", blogs), length))
+newsWords <- sum(sapply(gregexpr("\\S+", news), length))
+twitterWords <- sum(sapply(gregexpr("\\S+", twitter), length))
+
+```
+
+```{r, echo=FALSE}
+# create a data frame of file summary information
+file.SummaryInfo <- data.frame(
+  fileNames = c("Blogs", "News", "Tweets"),
+  fileSize = c(round(blogsFileSize, 2),
+               round(newsFileSize, 2),
+               round(twitterFileSize,2)),
+  lineCount = c(blogs.Length, news.Length, twitter.Length),
+  wordCount = c(blogsWords, newsWords, twitterWords)
+)
+
+colnames(file.SummaryInfo) <- c("File Name", "File Size (MBs)", "Line Count", "Word Count")
+``` 
+
+Below is a table summarizing the three text files used to form the corpus that will be the basis of my predictive text model. 
+
+```{r, echo=FALSE}
+knitr::kable(head(file.SummaryInfo))
+``` 
+### Data Sampling 
+I initially tried to utilize text mining techniques on the files as given, but found that they were too large. My computer would either crash or it would take too long to process. This led me to develop a custom function that would take a fractional sample of the files. I opted for a 5% sample of each file. This made it possible to process the data much faster using a representative portion of the provided text. 
+
+```{r, eval= FALSE, echo=TRUE}
+#====== Develop a corpus using a 5% sample of each file =======
+#Custom function to pull a sample of a file to save memory
+set.seed(1234)
+
+sampleFile <- function(filename, fraction) {
+  system(paste("perl -ne 'print if (rand() < ",
+               fraction, ")'", filename), intern=TRUE)
+}
+
+blogs <- sampleFile("final/en_US/en_US.blogs.txt", .05)
+news <- sampleFile("final/en_US/en_US.news.txt", .05)
+tweets <- sampleFile("final/en_US/en_US.twitter.txt", .05)
+``` 
+
+# Create a Clean Corpus via Data Cleaning 
+Once an acceptable sample of the data was collected, actions were taken to create a clean corpus. A **corpus** is defined as *a collection of texts, especially the entire works of a particular author or body of writing on a particular subject.* Cleaning the corpus consists of removing punctuation, eliminating stop words (Ex. "and", the", "but", etc.), converting all words to lower case, deleting URL's, and removing numbers. This was done utilizing functions found in the **tm** package. This is an iterative process made easier by the use of regular expressions. 
+
+```{r, eval = FALSE, echo=TRUE}
+#======= Create and Clean the Corpus =========================
+#Write text files using the sample text
+writeLines(blogs, "TextData/blogsTextSample.txt")
+writeLines(news, "TextData/newsTextSample.txt")
+writeLines(tweets, "TextData/tweetsTextSample.txt")
+rm(blogs,news, tweets)# Remove samples to save memory
+
+#====== Create Corpus of Sampled Text Files ===========
+mycorpus <- Corpus(DirSource("TextData"),readerControl = list(language="en"))
+
+#============= Begin cleaning/Pre-processing the data ===================
+# Create custom function to replace various punctuation marks between words with a space.
+# Example: next-door will become "next" "door" and not nextdoor or jay-z becomes "jay" "z" not jayz
+addSpace <- content_transformer(function(x, pattern) {return(gsub(pattern, " ", x))})
+
+# Create custom function to replace various punctuation marks between words with an empty space.
+noSpace <- content_transformer(function(x, pattern) {return(gsub(pattern, "", x))})
+
+# Create custom function to remove URLs
+remove_urls <- function(x) {
+  gsub("https[[:alnum:]]*", "", x)
+}
+
+#============================ PRE-PROCESSING ===================================================
+mycorpus <- tm_map(mycorpus, content_transformer(remove_urls)) #Remove URLs
+mycorpus <- tm_map(mycorpus, content_transformer(tolower))
+mycorpus <- tm_map(mycorpus, content_transformer(removeNumbers))
+mycorpus <- tm_map(mycorpus, removeWords, stopwords("english"))
+mycorpus <- tm_map(mycorpus, content_transformer(removePunctuation))
+mycorpus <- tm_map(mycorpus, content_transformer(stripWhitespace))
+mycorpus <- tm_map(mycorpus, noSpace, "n't|\\'s|\\'m|\\'re|\\'ll|\\'ve|\\'d") #Remove contraction endings
+``` 
+
+# Exploratory Data Analysis 
+Now that the corpus has been cleaned, exploratory data analysis was performed to try to better understand the text contained. 
+
+## N-Gram Tokenization 
+It is helpful to create visualizations of the frequently appearing words and word groupings. In the world of Natural Language Processing (NLP), this is called *tokenization*. By using the **NGramTokenizer** function in the **tm package**, we can formulate continuous sequences of text groupings of various sizes. These text groupings are called *N-Grams*. I created groupings of sizes 1 through 3 words called: Uni-grams, Bi-grams, and Tri-grams along with visulizations to give a peek into what might be learned about frequently occurring groupings as this should be very helpful in developing my prediction algorithm. 
+
+### Uni-grams 
+
+```{r, eval = FALSE, echo=TRUE}
+#================= Convert Corpus to a Document Term Matrix ==================
+# Convert docs to a Term Document Matrix
+mycorpus <- Corpus(DirSource("TextData"),readerControl = list(language="en"))
+mycorpus.dtm <- DocumentTermMatrix(mycorpus)
+#Compute number of terms and their frequencies
+freq <- colSums(as.matrix(mycorpus.dtm)) #Computes the number of times a word appears
+```
+
+```{r, fig.align= "center", fig.height=4, fig.width=6, eval=FALSE, echo=TRUE}
+#========== HISTOGRAM of Hi-freq Words =========================
+df <- data.frame(term=names(freq), occurrences=freq)
+g <- ggplot(subset(df, freq>5000), aes(term, occurrences))
+g <- g + geom_bar(stat = "identity")
+g <- g + theme_bw()
+g <- g + labs(title=("Most Frequently Occurring Words (>5,000 times)"))
+g <- g + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+g
+``` 
+```{r, fig.align= "center",out.width= "100%", echo=FALSE}
+knitr::include_graphics("Unigram.png", error = FALSE)
+```
+
+```{r, fig.align= "center", fig.height=4, fig.width=6, eval=FALSE, echo=TRUE}
+#========================= UNI-GRAM WORD CLOUD ========================
+set.seed(1234)
+#Limit words by specifying minimum frequency
+p <- wordcloud(names(freq), freq, min.freq = 5000, random.order = FALSE, colors = brewer.pal(7, "Dark2"))
+p
+
+``` 
+```{r, fig.align= "center",out.width= "100%", echo=FALSE}
+knitr::include_graphics("Unigram-wordcloud.png", error = FALSE)
+``` 
+
+### Bi-grams 
+
+```{r, eval = FALSE, echo=TRUE}
+myVCorpus <- as.matrix(TermDocumentMatrix(VCorpus(VectorSource(mycorpus)),
+list(tokenize = function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2)))))
+
+Bigram.freq <- rowSums(myVCorpus)
+``` 
+
+```{r, fig.align= "center", fig.height=4, fig.width=6, eval=FALSE, echo=TRUE}
+#========== HISTOGRAM of Hi-freq Bi-grams =========================
+Bigram.df <- data.frame(term=names(Bigram.freq), occurrences=Bigram.freq)
+v <- ggplot(subset(Bigram.df, freq>15000), aes(term, occurrences))
+v <- v + geom_bar(stat = "identity")
+v <- v + theme_bw()
+v <- v + labs(title=("Most Frequently Occurring Bigrams (>15,000 times)"))
+v <- v + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+v
+```
+```{r, fig.align= "center",out.width= "100%", echo=FALSE}
+knitr::include_graphics("Bigram.png", error = FALSE)
+```
+
+```{r, fig.align="center", fig.height=4, fig.width=6, eval=FALSE, echo=TRUE}
+#========================= BI-GRAM WORD CLOUD ========================
+set.seed(1234)
+#Limit words by specifying minimum frequency
+q <- wordcloud(names(Bigram.freq), scale = c(4, .25), min.freq = 2000, freq, random.order = FALSE, colors = brewer.pal(7, "Dark2"))
+q
+``` 
+```{r, fig.align= "center",out.width= "100%", echo=FALSE}
+knitr::include_graphics("Bigram-wordCloud.png", error = FALSE)
+```
+
+### Tri-grams 
+
+```{r, eval = FALSE, echo=TRUE}
+myVCorpus <- as.matrix(TermDocumentMatrix(VCorpus(VectorSource(mycorpus)),
+list(tokenize = function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3)))))
+
+Trigram.freq <- rowSums(myVCorpus)
+``` 
+
+```{r, fig.align="center", fig.height=4, fig.width=6, eval=FALSE, echo=TRUE}
+#========== HISTOGRAM of Hi-freq Tri-grams =========================
+Trigram.df <- data.frame(term=names(Trigram.freq), occurrences=Trigram.freq)
+w <- ggplot(subset(Trigram.df, freq>15000), aes(term, occurrences))
+w <- w + geom_bar(stat = "identity")
+w <- w + theme_bw()
+w <- w + labs(title=("Most Frequently Occurring Trigrams (>15,000 times)"))
+w <- w + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+w
+```
+```{r, fig.align= "center",out.width= "100%", echo=FALSE}
+knitr::include_graphics("Trigram.png", error = FALSE)
+```
+
+```{r, fig.align="center", fig.height=4, fig.width=6, eval=FALSE, echo=TRUE}
+#========================= TRI-GRAM WORD CLOUD ========================
+set.seed(1234)
+#Limit words by specifying minimum frequency
+r <- wordcloud(names(Trigram.freq), scale = c(4, .15), min.freq = 5000, freq, random.order = FALSE, colors = brewer.pal(7, "Dark2"))
+r
+``` 
+
+```{r, fig.align= "center",out.width= "100%", echo=FALSE}
+knitr::include_graphics("Trigram-wordCloud.png", error = FALSE)
+```
+
+# Interesting Findings 
+- The data files are large and take a long time to load and process. I was not able to make much progress without sampling.
+- The use of sampling could negatively impact the accuracy of word groupings.
+- Decisions will have to be made with regard to sampling versus run-time especially in a Shiny application.
+- Data cleaning is an iterative and time-consuming process. There are numerous things to consider such as emojies and non-standard spellings or slang used in informal settings like texting and Twitter. (Ex. OMG, LOL, or IYKYK)
+- How much time and attention must be given to removing this type of language? What impact will it have on the accuracy of prediction?
+- How large should **'N'** be in the development of N-Grams with regard to making for good predictions?
+- Many of the N-grams don't make sense in English language usage. Should other techniques be applied such as correlations or the use of established N-gram studies? Employing such things will make for more accurate predictions, but likely at the cost of speed. 
+
+# Next Steps 
+Next steps will be to use what I learned in during this exploratory analysis phase to further refine the tokenization process. I will research proven methods for generating predictive models and determine which one to apply based on the trade-offs of complexity, run-time, and accuracy. This model will then be placed into a shiny application that allows the user to enter text and predict next words based on the chosen prediction algorithm.
